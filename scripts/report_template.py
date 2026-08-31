@@ -135,6 +135,7 @@ tr:hover {{ background: #f8fafc; }}
 .bar-fill {{ height: 100%; border-radius: 4px; }}
 .bar-fill-g {{ background: linear-gradient(90deg, #34d399, #10b981); }}
 .bar-fill-b {{ background: linear-gradient(90deg, #60a5fa, #2563eb); }}
+.bar-fill-y {{ background: linear-gradient(90deg, #fde047, #eab308); }}
 .bar-fill-o {{ background: linear-gradient(90deg, #fbbf24, #f59e0b); }}
 .bar-fill-r {{ background: linear-gradient(90deg, #f87171, #ef4444); }}
 .bar-text {{ font-size: 11px; font-weight: 600; width: 40px; text-align: right; color: #475569; }}
