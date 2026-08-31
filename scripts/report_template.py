@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-report_template.py - 多班级全景教学分析 HTML 可视化报告渲染引擎 (Pro 最终全动态封板版)
+report_template.py - 多班级全景教学分析 HTML 可视化报告渲染引擎 (Pro 全模块班级动态联动封板版)
 1. 100% 像素级对齐参考报告排版
 2. 上方班级切换栏：支持全年级 / 班级横向对比 / 各具体班级
    - 第一部分：每日提交活跃度柱状图按所选班级实时重绘！
+   - 第三部分：困难学生画像（8列表头）按所选班级即时下钻过滤，提示文本联动，班内序号重编！
    - 第四部分：代码异常审计（4.1 首次即AC、4.2 极速连交、4.3 雷同聚焦、4.4 违规语言与AI注释）按所选班级即时过滤与动态重绘！
    - 第五部分：按班级即时过滤学生做题明细行
    - 第六部分（AC算法精细剖析）：
@@ -444,9 +445,7 @@ pre code {{
   <h2>第三部分：提交次数高但 AC 率偏低的学生名单（重点辅导画像）</h2>
   
   <div class="section">
-    <div class="info">
-      <b>筛选标准</b>：总提交次数 ≥ 20 次，且个人 AC 率 $< 50\%$。共识别出 <b>44 位</b>“态度积极但反复在进阶题卡壳”的困难生，以下为最需要教学辅导与关怀的学生：
-    </div>
+    <div class="info" id="struggling-info-box"></div>
     
     <table>
       <thead>
@@ -461,44 +460,7 @@ pre code {{
           <th>学习诊断画像</th>
         </tr>
       </thead>
-      <tbody>
-"""
-    struggling_list = stats_all.get("struggling", [])
-    for idx, st in enumerate(struggling_list[:40], 1):
-        u = st["user"]
-        tot = st["tot"]
-        ac = st["ac"]
-        wa = st["wa"]
-        solved = st["solved"]
-        ac_rate = st["ac_rate"]
-        bar_c = "bar-fill-r" if ac_rate < 25 else ("bar-fill-o" if ac_rate < 40 else "bar-fill-y")
-
-        diag_tag = "<span class='tag tag-gray'>重点辅导关怀</span>"
-        if wa >= 100:
-            diag_tag = "<span class='tag tag-red'>极度卡题 (试错超百次)</span>"
-        elif ac_rate < 20:
-            diag_tag = "<span class='tag tag-orange'>低AC率但高活跃</span>"
-        elif tot >= 60:
-            diag_tag = "<span class='tag tag-yellow'>反复试错攻坚</span>"
-
-        html_out += f"""        <tr>
-          <td>{idx}</td>
-          <td><code>{render_student_name(u)}</code></td>
-          <td><b>{tot} 次</b></td>
-          <td>{ac} 次</td>
-          <td><span class="tag tag-green">{solved} / 25 题</span></td>
-          <td>
-            <div class="bar-container">
-              <div class="bar-bg"><div class="bar-fill {bar_c}" style="width: {ac_rate}%;"></div></div>
-              <span class="bar-text">{ac_rate}%</span>
-            </div>
-          </td>
-          <td><b>{wa} 次</b></td>
-          <td>{diag_tag}</td>
-        </tr>
-"""
-
-    html_out += """      </tbody>
+      <tbody id="strugglingTableBody"></tbody>
     </table>
   </div>
 </div>
@@ -738,7 +700,7 @@ function switchErrProbTab(prob) {
   if (card) card.style.display = 'block';
 }
 
-// 顶部班级切换控制逻辑（动态联动第一、四、五、六、七部分）
+// 顶部班级切换控制逻辑（动态联动第一、三、四、五、六、七部分）
 function switchClassView(clsName) {
   currentClass = clsName;
   document.querySelectorAll('.class-btn').forEach(btn => btn.classList.remove('active'));
@@ -765,6 +727,7 @@ function switchClassView(clsName) {
     document.getElementById('current-view-badge').textContent = '全年级总览';
     updateSummaryCards(DATASET.stats_all, DATASET.anomalies_all);
     renderDailyChart(DATASET.stats_all.daily_subs || {}, DATASET.stats_all.daily_ac || {}, DATASET.stats_all.daily_users || {});
+    renderStrugglingStudents('全年级');
     renderAnomalies(DATASET.anomalies_all, '全年级');
     filterStudentsTableByClass('');
     renderAcAlgorithms('全年级');
@@ -777,6 +740,7 @@ function switchClassView(clsName) {
     const cAnom = DATASET.anomalies_by_class[clsName] || DATASET.anomalies_all;
     updateSummaryCards(cStat, cAnom);
     renderDailyChart(cStat.daily_subs || {}, cStat.daily_ac || {}, cStat.daily_users || {});
+    renderStrugglingStudents(clsName);
     renderAnomalies(cAnom, clsName);
     filterStudentsTableByClass(clsName);
     renderAcAlgorithms(clsName);
@@ -846,6 +810,73 @@ function renderDailyChart(dailySubs, dailyAc, dailyUsers) {
     </div>`;
   });
   stage.innerHTML = html;
+}
+
+// 第三部分：根据班级动态重绘困难学生画像
+function renderStrugglingStudents(clsName) {
+  const isAll = (clsName === '全年级' || clsName === 'all');
+  let currentStat = DATASET.stats_all;
+  let clsUserSet = null;
+  if (!isAll && DATASET.stats_by_class && DATASET.stats_by_class[clsName]) {
+    currentStat = DATASET.stats_by_class[clsName];
+    clsUserSet = new Set(Object.keys(currentStat.user_stats || {}));
+  }
+
+  const allStruggling = DATASET.stats_all.struggling || [];
+  const strugglingList = allStruggling.filter(st => (!clsUserSet || clsUserSet.has(st.user)));
+
+  const infoBox = document.getElementById('struggling-info-box');
+  if (infoBox) {
+    if (isAll) {
+      infoBox.innerHTML = `<b>筛选标准</b>：总提交次数 ≥ 20 次，且个人 AC 率 &lt; 50%。共识别出 <b>${strugglingList.length} 位</b>“态度积极但反复在进阶题卡壳”的困难生，以下为最需要教学辅导与关怀的学生：`;
+    } else {
+      infoBox.innerHTML = `<b>筛选标准</b>：总提交次数 ≥ 20 次，且个人 AC 率 &lt; 50%。【${escapeHtml(clsName)}】共识别出 <b>${strugglingList.length} 位</b>“态度积极但反复在进阶题卡壳”的困难生，以下为最需要教学辅导与关怀的学生：`;
+    }
+  }
+
+  const tbody = document.getElementById('strugglingTableBody');
+  if (tbody) {
+    if (strugglingList.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:#10b981; padding:16px;">🎉 本班暂无符合困难辅导特征的学生（全员表现优良或提交较少）</td></tr>`;
+    } else {
+      let html = '';
+      strugglingList.forEach((st, idx) => {
+        const u = st.user;
+        const tot = st.tot;
+        const ac = st.ac;
+        const wa = st.wa;
+        const solved = st.solved;
+        const acRate = st.ac_rate;
+        const barC = acRate < 25 ? 'bar-fill-r' : (acRate < 40 ? 'bar-fill-o' : 'bar-fill-y');
+
+        let diagTag = "<span class='tag tag-gray'>重点辅导关怀</span>";
+        if (wa >= 100) {
+          diagTag = "<span class='tag tag-red'>极度卡题 (试错超百次)</span>";
+        } else if (acRate < 20) {
+          diagTag = "<span class='tag tag-orange'>低AC率但高活跃</span>";
+        } else if (tot >= 60) {
+          diagTag = "<span class='tag tag-yellow'>反复试错攻坚</span>";
+        }
+
+        html += `<tr>
+          <td>${idx + 1}</td>
+          <td><code>${renderName(u)}</code></td>
+          <td><b>${tot} 次</b></td>
+          <td>${ac} 次</td>
+          <td><span class="tag tag-green">${solved} / 25 题</span></td>
+          <td>
+            <div class="bar-container">
+              <div class="bar-bg"><div class="bar-fill ${barC}" style="width: ${acRate}%;"></div></div>
+              <span class="bar-text">{acRate}%</span>
+            </div>
+          </td>
+          <td><b>${wa} 次</b></td>
+          <td>${diagTag}</td>
+        </tr>`;
+      });
+      tbody.innerHTML = html;
+    }
+  }
 }
 
 // 第四部分：根据班级动态重绘代码异常审计 (4.1~4.4)
@@ -1278,6 +1309,7 @@ function sortTable(tableId, colIdx) {
 // 页面加载完成后立即初始化首次渲染
 window.addEventListener('DOMContentLoaded', () => {
   renderDailyChart(DATASET.stats_all.daily_subs || {}, DATASET.stats_all.daily_ac || {}, DATASET.stats_all.daily_users || {});
+  renderStrugglingStudents('全年级');
   renderAnomalies(DATASET.anomalies_all, '全年级');
   renderAcAlgorithms('全年级');
   renderErrorDiagnostics('全年级');
