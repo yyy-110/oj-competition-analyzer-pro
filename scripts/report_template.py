@@ -867,7 +867,7 @@ function renderStrugglingStudents(clsName) {
           <td>
             <div class="bar-container">
               <div class="bar-bg"><div class="bar-fill ${barC}" style="width: ${acRate}%;"></div></div>
-              <span class="bar-text">{acRate}%</span>
+              <span class="bar-text">${acRate}%</span>
             </div>
           </td>
           <td><b>${wa} 次</b></td>
