@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-report_template.py - 多班级全景教学分析 HTML 可视化报告渲染引擎 (Pro 全模块班级动态联动封板版)
+report_template.py - 多班级全景教学分析 HTML 可视化报告渲染引擎 (Pro 最终全模块 1~7 班级动态联动封板版)
 1. 100% 像素级对齐参考报告排版
 2. 上方班级切换栏：支持全年级 / 班级横向对比 / 各具体班级
    - 第一部分：每日提交活跃度柱状图按所选班级实时重绘！
+   - 第二部分：25道题目难度与通关分布（尝试人数、通关比例、提交AC率、自适应难度等级）按所选班级即时动态重绘！
    - 第三部分：困难学生画像（8列表头）按所选班级即时下钻过滤，提示文本联动，班内序号重编！
    - 第四部分：代码异常审计（4.1 首次即AC、4.2 极速连交、4.3 雷同聚焦、4.4 违规语言与AI注释）按所选班级即时过滤与动态重绘！
    - 第五部分：按班级即时过滤学生做题明细行
@@ -397,46 +398,7 @@ pre code {{
           <th style="width:70px;">难度等级</th>
         </tr>
       </thead>
-      <tbody>
-"""
-    tot_active_users = max(stats_all.get("total_with_subs", 1), 1)
-    for p in all_probs:
-        p_name = prob_titles.get(p, f"题目 {p}")
-        att_u = stats_all.get("prob_users_total", {}).get(p, 0)
-        ac_u = stats_all.get("prob_users_ac", {}).get(p, 0)
-        tot_s = stats_all.get("prob_total", {}).get(p, 0)
-        ac_s = stats_all.get("prob_ac", {}).get(p, 0)
-        u_pct = round(ac_u / tot_active_users * 100, 1)
-        sub_pct = round(ac_s / tot_s * 100, 1) if tot_s > 0 else 0
-
-        diff = "极难" if (sub_pct < 35 or ac_u < tot_active_users * 0.3) else ("困难" if (sub_pct < 50 or ac_u < tot_active_users * 0.5) else ("中等" if sub_pct < 65 else "简单"))
-        diff_tag = "tag-red" if diff == "极难" else ("tag-orange" if diff == "困难" else ("tag-blue" if diff == "中等" else "tag-green"))
-        bar_c = "bar-fill-r" if diff == "极难" else ("bar-fill-o" if diff == "困难" else ("bar-fill-b" if diff == "中等" else "bar-fill-g"))
-
-        html_out += f"""        <tr>
-          <td><b>{p}</b></td>
-          <td><b>{py_html.escape(p_name)}</b></td>
-          <td>{att_u} 人</td>
-          <td><b>{ac_u} 人</b></td>
-          <td>
-            <div class="bar-container">
-              <div class="bar-bg"><div class="bar-fill {bar_c}" style="width: {u_pct}%;"></div></div>
-              <span class="bar-text">{u_pct}%</span>
-            </div>
-          </td>
-          <td>{tot_s}</td>
-          <td>{ac_s}</td>
-          <td>
-            <div class="bar-container">
-              <div class="bar-bg"><div class="bar-fill {bar_c}" style="width: {sub_pct}%;"></div></div>
-              <span class="bar-text">{sub_pct}%</span>
-            </div>
-          </td>
-          <td><span class="tag {diff_tag}">{diff}</span></td>
-        </tr>
-"""
-
-    html_out += """      </tbody>
+      <tbody id="problemsTableBody"></tbody>
     </table>
   </div>
 </div>
@@ -701,7 +663,7 @@ function switchErrProbTab(prob) {
   if (card) card.style.display = 'block';
 }
 
-// 顶部班级切换控制逻辑（动态联动第一、三、四、五、六、七部分）
+// 顶部班级切换控制逻辑（动态联动第一至第七全量模块）
 function switchClassView(clsName) {
   currentClass = clsName;
   document.querySelectorAll('.class-btn').forEach(btn => btn.classList.remove('active'));
@@ -728,6 +690,7 @@ function switchClassView(clsName) {
     document.getElementById('current-view-badge').textContent = '全年级总览';
     updateSummaryCards(DATASET.stats_all, DATASET.anomalies_all);
     renderDailyChart(DATASET.stats_all.daily_subs || {}, DATASET.stats_all.daily_ac || {}, DATASET.stats_all.daily_users || {});
+    renderProblemsTable('全年级');
     renderStrugglingStudents('全年级');
     renderAnomalies(DATASET.anomalies_all, '全年级');
     filterStudentsTableByClass('');
@@ -741,6 +704,7 @@ function switchClassView(clsName) {
     const cAnom = DATASET.anomalies_by_class[clsName] || DATASET.anomalies_all;
     updateSummaryCards(cStat, cAnom);
     renderDailyChart(cStat.daily_subs || {}, cStat.daily_ac || {}, cStat.daily_users || {});
+    renderProblemsTable(clsName);
     renderStrugglingStudents(clsName);
     renderAnomalies(cAnom, clsName);
     filterStudentsTableByClass(clsName);
@@ -811,6 +775,80 @@ function renderDailyChart(dailySubs, dailyAc, dailyUsers) {
     </div>`;
   });
   stage.innerHTML = html;
+}
+
+// 第二部分：根据班级动态重绘 25 道题目难度与通关分布
+function renderProblemsTable(clsName) {
+  const tbody = document.getElementById('problemsTableBody');
+  if (!tbody) return;
+
+  const isAll = (clsName === '全年级' || clsName === 'all');
+  let currentStat = DATASET.stats_all;
+  if (!isAll && DATASET.stats_by_class && DATASET.stats_by_class[clsName]) {
+    currentStat = DATASET.stats_by_class[clsName];
+  }
+
+  const allProbs = DATASET.all_probs || [];
+  const totActiveUsers = Math.max(currentStat.total_with_subs || 1, 1);
+  const pUsersTotal = currentStat.prob_users_total || {};
+  const pUsersAc = currentStat.prob_users_ac || {};
+  const pTotal = currentStat.prob_total || {};
+  const pAc = currentStat.prob_ac || {};
+
+  let html = '';
+  allProbs.forEach(p => {
+    const pName = PROB_TITLES[p] || ('题目 ' + p);
+    const attU = pUsersTotal[p] || 0;
+    const acU = pUsersAc[p] || 0;
+    const totS = pTotal[p] || 0;
+    const acS = pAc[p] || 0;
+
+    const uPct = (acU / totActiveUsers * 100).toFixed(1);
+    const subPct = totS > 0 ? (acS / totS * 100).toFixed(1) : 0;
+
+    // 自适应难度等级研判
+    let diff = '简单';
+    let diffTag = 'tag-green';
+    let barC = 'bar-fill-g';
+
+    if (subPct < 35 || acU < totActiveUsers * 0.3) {
+      diff = '极难';
+      diffTag = 'tag-red';
+      barC = 'bar-fill-r';
+    } else if (subPct < 50 || acU < totActiveUsers * 0.5) {
+      diff = '困难';
+      diffTag = 'tag-orange';
+      barC = 'bar-fill-o';
+    } else if (subPct < 65) {
+      diff = '中等';
+      diffTag = 'tag-blue';
+      barC = 'bar-fill-b';
+    }
+
+    html += `<tr>
+      <td><b>${p}</b></td>
+      <td><b>${escapeHtml(pName)}</b></td>
+      <td>${attU} 人</td>
+      <td><b>${acU} 人</b></td>
+      <td>
+        <div class="bar-container">
+          <div class="bar-bg"><div class="bar-fill ${barC}" style="width: ${uPct}%;"></div></div>
+          <span class="bar-text">${uPct}%</span>
+        </div>
+      </td>
+      <td>${totS}</td>
+      <td>${acS}</td>
+      <td>
+        <div class="bar-container">
+          <div class="bar-bg"><div class="bar-fill ${barC}" style="width: ${subPct}%;"></div></div>
+          <span class="bar-text">${subPct}%</span>
+        </div>
+      </td>
+      <td><span class="tag ${diffTag}">${diff}</span></td>
+    </tr>`;
+  });
+
+  tbody.innerHTML = html;
 }
 
 // 第三部分：根据班级动态重绘困难学生画像
@@ -1310,6 +1348,7 @@ function sortTable(tableId, colIdx) {
 // 页面加载完成后立即初始化首次渲染
 window.addEventListener('DOMContentLoaded', () => {
   renderDailyChart(DATASET.stats_all.daily_subs || {}, DATASET.stats_all.daily_ac || {}, DATASET.stats_all.daily_users || {});
+  renderProblemsTable('全年级');
   renderStrugglingStudents('全年级');
   renderAnomalies(DATASET.anomalies_all, '全年级');
   renderAcAlgorithms('全年级');
